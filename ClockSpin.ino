@@ -15,15 +15,16 @@
 #define ROTARY_PIN_CLOCK 14
 #define ROTARY_PIN_DT 12
 #define ROTARY_BUTTON 13
-#define ROTARY_STEPS_PER_CLICK 3
+#define ROTARY_STEPS_PER_CLICK 4
 
 #define AP_NAME "Clockulator"
 
-int brightness = 2;        // 0 - 7
-int local_offset = -28800; // -8h in sec
-int dial_speed = 600;      // seconds
-int auto_reset_delay = 10; // seconds
+const int local_tz_offset = -28800; // -8h in sec
+const int brightness = 4;           // 0 - 7
+const int auto_reset_delay = 10;    // seconds
+const int rotary_increment = -600;  // seconds
 
+int dial_offset = 0;
 unsigned long last_touch = 0;
 
 TM1637 tm1637_local(CLK1, DIO1);
@@ -52,14 +53,14 @@ void update_display(TM1637* display, int offset) {
 }
 
 void reset_offset(Button2& b) {
-  rotary.resetPosition();
+  dial_offset = 0;
 }
 
 void auto_reset_offset() {
   timeClient.setTimeOffset(0);
   unsigned long now = timeClient.getEpochTime();
   if (last_touch + auto_reset_delay < now) {
-    rotary.resetPosition();
+    dial_offset = 0;
   }
 }
 
@@ -68,13 +69,21 @@ void reset_last_touch(ESPRotary& r) {
   last_touch = timeClient.getEpochTime();
 }
 
+void decrement_offset(ESPRotary& r) {
+  dial_offset -= rotary_increment;
+}
+
+void increment_offset(ESPRotary& r) {
+  dial_offset += rotary_increment;
+}
+
 void setup(){
   setup_display(&tm1637_local);
   setup_display(&tm1637_utc);
 
-  rotary.setStepsPerClick(ROTARY_STEPS_PER_CLICK);
   rotary.setChangedHandler(reset_last_touch);
-  rotary.setIncrement(dial_speed);
+  rotary.setLeftRotationHandler(decrement_offset);
+  rotary.setRightRotationHandler(increment_offset);
 
   button.begin(ROTARY_BUTTON);
   button.setTapHandler(reset_offset);
@@ -91,6 +100,6 @@ void loop() {
   button.loop();
   auto_reset_offset();
 
-  update_display(&tm1637_local, local_offset + rotary.getPosition());
-  update_display(&tm1637_utc, rotary.getPosition());
+  update_display(&tm1637_local, local_tz_offset + dial_offset);
+  update_display(&tm1637_utc, dial_offset);
 }

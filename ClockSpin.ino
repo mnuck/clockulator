@@ -4,6 +4,7 @@
 #include <TM1637.h>
 #include <ESPRotary.h>
 #include <Button2.h>
+#include <WiFiManager.h>
 
 #define CLK1 5
 #define DIO1 4
@@ -65,6 +66,10 @@ void setup(){
 
   button.begin(ROTARY_BUTTON);
   button.setTapHandler(resetOffset);
+
+  WiFiManager wm;
+  wm.autoConnect("Clockulator");
+
   timeClient.begin();
 }
 

@@ -12,13 +12,14 @@
 #define CLK2 0
 #define DIO2 2
 
-#define ROTARY_PIN1 14
-#define ROTARY_PIN2 12
+#define ROTARY_PIN_CLOCK 14
+#define ROTARY_PIN_DT 12
 #define ROTARY_BUTTON 13
 
-const int local_offset = -28800; // -8h in sec
-const int utc_offset = 0;
-int dial_offset = 0;
+#define AP_NAME "Clockulator"
+
+int brightness = 2;        // 0 - 7
+int local_offset = -28800; // -8h in sec
 
 TM1637 tm1637_local(CLK1, DIO1);
 TM1637 tm1637_utc(CLK2, DIO2);
@@ -26,12 +27,12 @@ TM1637 tm1637_utc(CLK2, DIO2);
 WiFiUDP ntpUDP;
 NTPClient timeClient(ntpUDP, "pool.ntp.org");
 
-ESPRotary rotary(ROTARY_PIN1, ROTARY_PIN2);
+ESPRotary rotary(ROTARY_PIN_CLOCK, ROTARY_PIN_DT);
 Button2 button;
 
 void setup_display(TM1637* display) {
   display->init();
-  display->set(BRIGHT_TYPICAL);
+  display->set(brightness);
   display->point(POINT_ON);
 }
 
@@ -45,7 +46,7 @@ void update_display(TM1637* display, int offset) {
   display->display(3, minutes % 10);
 }
 
-void decrementOffset(ESPRotary& r) {
+void reset_offset(Button2& b) {
   dial_offset += 600;
 }
 
@@ -65,10 +66,10 @@ void setup(){
   rotary.setRightRotationHandler(incrementOffset);
 
   button.begin(ROTARY_BUTTON);
-  button.setTapHandler(resetOffset);
+  button.setTapHandler(reset_offset);
 
   WiFiManager wm;
-  wm.autoConnect("Clockulator");
+  wm.autoConnect(AP_NAME);
 
   timeClient.begin();
 }

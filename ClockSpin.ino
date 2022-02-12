@@ -1,3 +1,42 @@
+/*
+ * Clockulator
+ * Matthew (mnuck) Nuckolls <matthew.nuckolls@gmail.com>
+ * 
+ * Setup:
+ *  1. Plug into USB for power.
+ *  2. Grab any device with wifi and a browser.
+ *  3. Connect to Clockulator access point.
+ *  4. Go to any website, get redirected.
+ *  5. Tell this thing your Wifi connection info.
+ *  
+ * Theory of Operation:
+ *    This device connects to pool.ntp.org every 60 seconds
+ *    to synchronize its internal clock. Local time is displayed
+ *    on one 4-digit display. UTC time is displayed on the other.
+ *    The rotary knob offsets both displays to show time in the
+ *    past or future. Press the rotary knob button to return to
+ *    present time. If the knob is not touched for 10 seconds,
+ *    offset automatically returns to present time.
+ *    
+ * But Why?
+ *    This device answers four common questions.
+ *    1. What time is right now?
+ *    2. What time is it UTC right now?
+ *    3. When it is timeX here, what time is it UTC?
+ *    4. When it is timeX UTC, what time is it here?
+ *    
+ * ESP-12E microcontroller board (ESP8266 module)
+ * Two TM1637 4-digit clock displays
+ * One rotary encoder with button
+ * 
+ * Libraries Used:
+ *  Wifi Manager
+ *  NTPClient
+ *  ESPRotary
+ *  Button2
+ *  Grove 4-Digit Display  
+ */
+
 #include <Button2.h>
 #include <ESP8266WiFi.h>
 #include <ESPRotary.h>

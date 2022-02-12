@@ -21,6 +21,7 @@
 
 int brightness = 2;        // 0 - 7
 int local_offset = -28800; // -8h in sec
+int dial_speed = 600;      // seconds
 
 TM1637 tm1637_local(CLK1, DIO1);
 TM1637 tm1637_utc(CLK2, DIO2);
@@ -48,14 +49,14 @@ void update_display(TM1637* display, int offset) {
 }
 
 void reset_offset(Button2& b) {
-  dial_offset += 600;
+  rotary.resetPosition();
 }
 
-void incrementOffset(ESPRotary& r) {
-  dial_offset -= 600;
+void auto_reset_offset() {
+  timeClient.setTimeOffset(0);
 }
 
-void resetOffset(Button2& b) {
+void reset_last_touch(ESPRotary& r) {
   dial_offset = 0;
 }
 
@@ -64,7 +65,8 @@ void setup(){
   setup_display(&tm1637_utc);
 
   rotary.setStepsPerClick(ROTARY_STEPS_PER_CLICK);
-  rotary.setRightRotationHandler(incrementOffset);
+  rotary.setChangedHandler(reset_last_touch);
+  rotary.setIncrement(dial_speed);
 
   button.begin(ROTARY_BUTTON);
   button.setTapHandler(reset_offset);
@@ -77,8 +79,8 @@ void setup(){
 
 void loop() {
   timeClient.update();
-  update_display(&tm1637_local, local_offset + dial_offset);
-  update_display(&tm1637_utc, utc_offset + dial_offset);
   rotary.loop();
   button.loop();
+  update_display(&tm1637_local, local_offset + rotary.getPosition());
+  update_display(&tm1637_utc, rotary.getPosition());
 }

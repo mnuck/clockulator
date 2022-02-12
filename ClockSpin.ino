@@ -1,9 +1,9 @@
-#include <NTPClient.h>
-#include <ESP8266WiFi.h>
-#include <WiFiUdp.h>
-#include <TM1637.h>
-#include <ESPRotary.h>
 #include <Button2.h>
+#include <ESP8266WiFi.h>
+#include <ESPRotary.h>
+#include <NTPClient.h>
+#include <TM1637.h>
+#include <WiFiUdp.h>
 #include <WiFiManager.h>
 
 #define CLK1 5

@@ -5,8 +5,8 @@
 #include <ESPRotary.h>
 #include <Button2.h>
 
-const char *ssid     = "*";
-const char *password = "*";
+#define CLK1 5
+#define DIO1 4
 
 #define CLK2 0
 #define DIO2 2

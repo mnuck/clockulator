@@ -15,6 +15,7 @@
 #define ROTARY_PIN_CLOCK 14
 #define ROTARY_PIN_DT 12
 #define ROTARY_BUTTON 13
+#define ROTARY_STEPS_PER_CLICK 3
 
 #define AP_NAME "Clockulator"
 
@@ -62,7 +63,7 @@ void setup(){
   setup_display(&tm1637_local);
   setup_display(&tm1637_utc);
 
-  rotary.setLeftRotationHandler(decrementOffset);
+  rotary.setStepsPerClick(ROTARY_STEPS_PER_CLICK);
   rotary.setRightRotationHandler(incrementOffset);
 
   button.begin(ROTARY_BUTTON);

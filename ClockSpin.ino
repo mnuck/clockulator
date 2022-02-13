@@ -5,9 +5,9 @@
  * Setup:
  *  1. Plug into USB for power.
  *  2. Grab any device with wifi and a browser.
- *  3. Connect to Clockulator access point.
+ *  3. Connect to wifi access point named Clockulator.
  *  4. Go to any website, get redirected.
- *  5. Tell this thing your Wifi connection info.
+ *  5. Add your Wifi connection to this device.
  *  
  * Theory of Operation:
  *    This device connects to pool.ntp.org every 60 seconds

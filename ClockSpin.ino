@@ -9,6 +9,9 @@
  *  4. Go to any website, get redirected.
  *  5. Add your Wifi connection to this device.
  *  
+ *  If you need to re-run the config workflow, unplug the device, 
+ *  then press the rotary knob while plugging it back in.
+ *  
  * Theory of Operation:
  *    This device connects to pool.ntp.org every 60 seconds
  *    to synchronize its internal clock. Local time is displayed
@@ -124,11 +127,16 @@ void setup(){
   rotary.setLeftRotationHandler(decrement_offset);
   rotary.setRightRotationHandler(increment_offset);
 
+  WiFiManager wm;
+  pinMode(ROTARY_BUTTON, INPUT_PULLUP);
+  if (digitalRead(ROTARY_BUTTON) == LOW) {
+    wm.startConfigPortal(AP_NAME);
+  } else {
+    wm.autoConnect(AP_NAME);
+  }
   button.begin(ROTARY_BUTTON);
   button.setTapHandler(reset_offset);
 
-  WiFiManager wm;
-  wm.autoConnect(AP_NAME);
 
   timeClient.begin();
 }

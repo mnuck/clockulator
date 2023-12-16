@@ -106,24 +106,20 @@ void auto_reset_offset() {
   }
 }
 
-void reset_last_touch(ESPRotary& r) {
-  timeClient.setTimeOffset(0);
-  last_touch = timeClient.getEpochTime();
-}
-
 void decrement_offset(ESPRotary& r) {
   dial_offset -= rotary_increment;
+  last_touch = timeClient.getEpochTime();
 }
 
 void increment_offset(ESPRotary& r) {
   dial_offset += rotary_increment;
+  last_touch = timeClient.getEpochTime();
 }
 
 void setup(){
   setup_display(&tm1637_local);
   setup_display(&tm1637_utc);
 
-  rotary.setChangedHandler(reset_last_touch);
   rotary.setLeftRotationHandler(decrement_offset);
   rotary.setRightRotationHandler(increment_offset);
 

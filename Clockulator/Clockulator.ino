@@ -6,12 +6,14 @@
  *
  * Theory of Operation:
  *    Synchronises to pool.ntp.org and shows UTC on the top half of the panel
- *    and local time on the bottom. Twisting the device offsets both clocks to
+ *    and local time on the bottom. Tilting the device offsets both clocks to
  *    show time in the past or future; tapping it on the desk returns to the
  *    present, as does leaving it alone for ten seconds.
  *
- *    Twist clockwise for later, counter-clockwise for earlier. (Note this is
- *    the opposite of the original, where left rotation moved time forward.)
+ *    Tilt works like a kitchen timer's H and M buttons. A shallow tilt (~30
+ *    degrees) steps minutes, a deep tilt (~60 degrees) steps hours, and the
+ *    direction of tilt decides forward or back. Holding a tilt keeps stepping,
+ *    accelerating the longer it is held.
  *
  * But Why?
  *    Four common questions:
@@ -60,16 +62,19 @@ static void applyZone(int idx, bool persist) {
   displayForceRedraw();
 }
 
-// Tilt-to-rate ("airplane") control: tilt angle sets how fast time scrolls, and
-// it keeps scrolling until the device is returned to level. Curve is quadratic
-// so small tilts give fine control and full deflection covers hours:
-//   10deg ~ 1.5 min/s   20deg ~ 13 min/s   30deg ~ 37 min/s   50deg ~ 2 h/s
-static const float TILT_FULL_DEG   = 50.0f;   // measured comfortable deflection
-static const float TILT_DEAD_DEG   = 5.0f;    // matches the deadband in gestures.cpp
-static const float MAX_RATE_SEC_S  = 7200.0f; // seconds of time per real second at full tilt
-static const float TILT_EXPO       = 2.0f;
+// Tilt picks a gear, the way a kitchen timer has an H button and an M button:
+// a shallow tilt adjusts minutes, a deep tilt adjusts hours, and the sign says
+// which way. Holding starts stepping at once and accelerates the longer it is
+// held, like a scroll wheel.
+static const float TILT_GEAR_SPLIT_DEG = 45.0f;  // below: minutes (~30), above: hours (~60)
+static const float TILT_GEAR_HYST_DEG  = 3.0f;   // so a tilt held near the split does not flicker
+static const float REPEAT_MIN_HZ   = 2.0f;       // steps/sec on entering a gear
+static const float REPEAT_MAX_HZ   = 10.0f;      // steps/sec once fully ramped
+static const float REPEAT_ACCEL_S  = 2.5f;       // seconds of holding to reach full speed
 
-static const int32_t  SNAP_SECONDS  = 600;    // display snaps to 10 min, as in the original
+static const int32_t STEP_MINUTE = 60;
+static const int32_t STEP_HOUR   = 3600;
+
 static const uint32_t IDLE_RESET_MS = 10000;  // original's auto_reset_delay
 static const uint32_t WIFI_RETRY_MS   = 30000;
 
@@ -89,8 +94,14 @@ static const uint32_t FACE_DOWN_HOLD_MS = 3000;
 // Anything past 2020 means SNTP has landed at least once.
 static const time_t CLOCK_VALID_AFTER = 1600000000;
 
-static float dialOffset = 0.0f;   // seconds, accumulated continuously
+static int32_t dialOffset = 0;    // seconds; always a whole number of minutes
 static uint32_t lastRateMs = 0;
+
+// Gear state for the tilt stepper.
+static int activeGear = 0;        // 0 none, 1 minutes, 2 hours
+static int activeSign = 0;
+static uint32_t holdStartMs = 0;
+static float stepPhase = 0.0f;
 static uint32_t lastTouchMs = 0;
 static uint32_t lastWifiAttemptMs = 0;
 static bool wifiWasConnected = false;
@@ -192,7 +203,7 @@ void loop() {
 
   switch (takeTap()) {
     case TAP_DESK:
-      dialOffset = 0.0f;         // flat tap: back to real time
+      dialOffset = 0;            // flat tap: back to real time
       lastTouchMs = nowMs;
       Serial.println("tap: desk - back to real time");
       break;
@@ -206,24 +217,51 @@ void loop() {
       break;
   }
 
-  // Integrate tilt into the offset. Rate, not position: hold a tilt and time
-  // keeps moving; return to level and it stops where it landed.
+  // Tilt selects a gear and steps it. tiltDeg() already applies the deadband and
+  // zeroes anything past 90 degrees, so a non-zero reading means a live gesture.
   float dt = (nowMs - lastRateMs) / 1000.0f;
   lastRateMs = nowMs;
   if (dt > 0.0f && dt < 0.5f) {
     float tilt = tiltDeg();
-    if (tilt != 0.0f) {
-      float span = TILT_FULL_DEG - TILT_DEAD_DEG;
-      float norm = (fabsf(tilt) - TILT_DEAD_DEG) / span;
-      if (norm > 1.0f) norm = 1.0f;             // clamp past full deflection
-      float rate = MAX_RATE_SEC_S * powf(norm, TILT_EXPO);
-      dialOffset += (tilt > 0 ? rate : -rate) * dt;
+    float mag = fabsf(tilt);
+    int sign = (tilt > 0) - (tilt < 0);
+
+    int gear = 0;
+    if (mag > 0.0f) {
+      // Hysteresis: the threshold to climb into hours is higher than the one to
+      // fall back to minutes.
+      float split = TILT_GEAR_SPLIT_DEG + (activeGear == 2 ? -TILT_GEAR_HYST_DEG : TILT_GEAR_HYST_DEG);
+      gear = (mag > split) ? 2 : 1;
+    }
+
+    if (gear != activeGear || sign != activeSign) {
+      activeGear = gear;
+      activeSign = sign;
+      holdStartMs = nowMs;
+      stepPhase = gear ? 1.0f : 0.0f;   // entering a gear steps once straight away
+      if (gear) Serial.printf("tilt: %s %s (%.0f deg)\n",
+                              gear == 2 ? "HOURS" : "minutes",
+                              sign > 0 ? "forward" : "back", tilt);
+    }
+
+    if (activeGear) {
+      float held = (nowMs - holdStartMs) / 1000.0f;
+      float ramp = held / REPEAT_ACCEL_S;
+      if (ramp > 1.0f) ramp = 1.0f;
+      float hz = REPEAT_MIN_HZ + (REPEAT_MAX_HZ - REPEAT_MIN_HZ) * ramp;
+
+      stepPhase += hz * dt;
+      int32_t unit = (activeGear == 2) ? STEP_HOUR : STEP_MINUTE;
+      while (stepPhase >= 1.0f) {
+        stepPhase -= 1.0f;
+        dialOffset += activeSign * unit;
+      }
       lastTouchMs = nowMs;
     }
   }
 
-  if (dialOffset != 0.0f && nowMs - lastTouchMs > IDLE_RESET_MS) {
-    dialOffset = 0.0f;
+  if (dialOffset != 0 && nowMs - lastTouchMs > IDLE_RESET_MS) {
+    dialOffset = 0;
   }
 
   // Retry WiFi in the background rather than blocking setup() on it.
@@ -245,8 +283,7 @@ void loop() {
     return;
   }
 
-  int32_t shown = (int32_t)lroundf(dialOffset / SNAP_SECONDS) * SNAP_SECONDS;
-  time_t moment = base + shown;
+  time_t moment = base + dialOffset;
   struct tm utc, loc;
   gmtime_r(&moment, &utc);
   localtime_r(&moment, &loc);

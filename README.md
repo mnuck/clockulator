@@ -31,9 +31,11 @@ a prism, and a QMI8658 6-axis IMU. No knob, no buttons, so every control is a
 gesture.
 
 - UTC on the top half of the panel, local time below
-- **Tilt and hold** to scroll time, aeroplane-style: tilt angle sets the *rate*,
-  and time keeps moving until you level it off. The curve is quadratic, so small
-  tilts give fine control and full deflection covers hours
+- **Tilt to set time**, the way a kitchen timer has an H button and an M button:
+  a shallow tilt (~30 degrees) steps minutes, a deep tilt (~60 degrees) steps
+  hours, and which way you tilt decides forward or back. A quick tilt-and-return
+  moves exactly one unit; holding keeps stepping and accelerates the longer it
+  is held
 - **Tap it flat on the desk** to return to the present
 - **Tap its left or right edge on the desk** to change timezone (see `zones.h`)
 - **Hold it face-down for three seconds** to open the WiFi config portal

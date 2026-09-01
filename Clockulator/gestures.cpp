@@ -18,11 +18,19 @@
 static const int8_t TILT_SIGN = +1;
 
 // Neutral noise measured under 0.5 deg, handling transients under 4 deg.
-static const float TILT_DEADBAND_DEG = 5.0f;
+// Hysteresis, not a single edge: with one threshold the reading chatters across
+// it while the device settles, and since entering a gear steps the clock
+// immediately, every crossing nudged the time by a minute. A deliberate tilt
+// has to reach ENTER to start, and stays live until it falls below EXIT.
+static const float TILT_ENTER_DEG = 9.0f;
+static const float TILT_EXIT_DEG  = 4.0f;
 
-// Tap. Measured, normalised by resting gravity: striking an edge on the desk
-// gives 7-9, handling and pickup noise stays under 1.9. 3.5 sits between them.
-static const float TAP_TRIGGER_REL = 3.5f;
+// Tap, normalised by resting gravity. On the bench a deliberate strike measured
+// 7-9 and handling noise stayed under 1.9, which put this at 3.5. Days of actual
+// use showed that was too high -- real taps are softer than test taps. Lowered
+// to 2.5, which keeps roughly 1.3x margin over handling noise; if picking the
+// device up ever causes a phantom reset, this is the reason.
+static const float TAP_TRIGGER_REL = 2.5f;
 static const uint32_t TAP_REFRACTORY_MS = 400;
 static const uint32_t TAP_FOLLOW_MS = 60;   // track the impact to find its true peak
 
@@ -43,6 +51,7 @@ static float neutralAngle = 0.0f;
 static bool haveNeutral = false;
 
 static float curTilt = 0.0f;
+static bool tiltActive = false;
 static TapKind pendingTap = TAP_NONE;
 static uint32_t lastTapMs = 0;
 static uint32_t relearnNeutralAt = 0;
@@ -163,8 +172,14 @@ void gesturesPoll() {
 
   // Past vertical the reading is not a control input any more -- flipping the
   // device over reads +-175 deg, which would otherwise scroll time wildly.
-  if (fabsf(deg) > 90.0f) curTilt = 0.0f;
-  else curTilt = (fabsf(deg) < TILT_DEADBAND_DEG) ? 0.0f : deg;
+  if (fabsf(deg) > 90.0f) {
+    tiltActive = false;
+    curTilt = 0.0f;
+  } else {
+    if (!tiltActive && fabsf(deg) > TILT_ENTER_DEG) tiltActive = true;
+    else if (tiltActive && fabsf(deg) < TILT_EXIT_DEG) tiltActive = false;
+    curTilt = tiltActive ? deg : 0.0f;
+  }
 
   float m = sqrtf(fax*fax + fay*fay + faz*faz);
   bool down = (m > 0.05f) && (faz / m < -0.5f);

@@ -49,6 +49,20 @@ Libraries: WiFiManager, TFT_eSPI, SensorLib. NTP and DST come from the ESP32
 core's own `configTzTime()` and POSIX timezone strings, which replaces the
 NTPClient/Time/Timezone stack the ESP8266 build needs.
 
+### Building
+
+Board settings are recorded in `Clockulator/sketch.yaml`, which both
+`arduino-cli` and Arduino IDE 2.x read, so nothing needs setting in the Tools
+menu. `PartitionScheme=huge_app` is the one to keep an eye on: the firmware is
+about 1.1 MB, and the default scheme's app slot is only about 1.3 MB.
+
+    tools/flash.sh        # build and upload
+    tools/cap.py 20       # reset the board and capture 20s of output from boot
+
+Both find `arduino-cli` (including the copy bundled inside Arduino IDE 2.x) and
+the board's serial port by themselves; pass a port or set `CLOCKULATOR_PORT` to
+override. Close the IDE's Serial Monitor before running `cap.py`.
+
 ### Notes for this hardware
 
 The sensor and display constants in `gestures.cpp` were measured on the device

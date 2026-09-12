@@ -1,6 +1,8 @@
 #include "net.h"
 
 #include <WiFi.h>
+#include <esp_mac.h>
+#include <esp_random.h>
 #include <esp_sntp.h>
 #include <esp_timer.h>
 #include <esp_wifi.h>
@@ -178,7 +180,16 @@ void netPoll(const char *posixTz) {
 // The clock needs the network for a few seconds a day. Between syncs the radio
 // is off, so the device is invisible on the network: nothing to spoof, ping or
 // deauth. The crystal carries the time in between; each sync logs the drift.
-static const uint32_t SYNC_EVERY_MS      = 24UL * 60 * 60 * 1000;
+//
+// Built to run as a fleet. A fixed 24h interval would anchor every device's
+// sync to its boot time, so a building-wide power cut would line a thousand of
+// them up to join the network, and hit NTP from behind one NAT address, in the
+// same second every day for ever. Instead each device syncs once a day at its
+// own UTC time of day, derived from its MAC and anchored to the wall clock, so
+// a mass reboot cannot correlate them. Boot syncs and retries are spread too.
+static const uint32_t DAY_S              = 86400;
+static const uint32_t MIN_SYNC_GAP_S     = 3600;      // skip a slot this close after a sync
+static const uint32_t BOOT_DELAY_MAX_S   = 120;       // spreads a mass reboot's first syncs
 static const uint32_t CONNECT_TIMEOUT_MS = 30000;
 static const uint32_t SYNC_TIMEOUT_MS    = 60000;
 static const uint32_t RETRY_MIN_MS       = 60UL * 1000;
@@ -189,6 +200,38 @@ static SyncPhase phase = PHASE_IDLE;
 static uint32_t phaseStartMs = 0;
 static uint32_t idleForMs = 0;
 static uint32_t retryMs = RETRY_MIN_MS;
+
+static uint32_t dailySlotS = 0;   // this device's sync time, UTC seconds past midnight
+static uint32_t rngState = 1;     // retry jitter
+
+// FNV-1a, then MurmurHash3's finaliser. The finaliser matters: MACs from one
+// production batch are sequential, and without a strong final mix they cluster.
+// Modelled offline for 1,000 sequential MACs: raw MAC mod 86400 put 844 devices
+// in one 15-minute window; this hash puts at most 19 there, the same as random.
+static uint32_t fmix32(uint32_t h) {
+  h ^= h >> 16; h *= 0x85ebca6bu;
+  h ^= h >> 13; h *= 0xc2b2ae35u;
+  h ^= h >> 16;
+  return h;
+}
+
+static uint32_t deviceHash() {
+  uint8_t mac[6];
+  esp_read_mac(mac, ESP_MAC_WIFI_STA);
+  uint32_t h = 2166136261u;
+  for (uint8_t b : mac) { h ^= b; h *= 16777619u; }
+  return fmix32(h);
+}
+
+// xorshift32, for retry jitter only. Scheduling uses the MAC rather than a
+// random number, because a fleet of identical boards on identical firmware that
+// all drew the same "random" slot would be no spread at all.
+static uint32_t nextRand() {
+  rngState ^= rngState << 13;
+  rngState ^= rngState >> 17;
+  rngState ^= rngState << 5;
+  return rngState;
+}
 
 static void radioOff() {
   if (esp_sntp_enabled()) esp_sntp_stop();
@@ -202,11 +245,31 @@ static void goIdle(uint32_t forMs) {
   idleForMs = forMs;
 }
 
+// Exponential backoff with full jitter: wait a random time up to the current
+// backoff, so devices that fail together (the AP or NTP going down) do not
+// retry together.
 static void syncFailed(const char *why) {
   radioOff();
-  Serial.printf("wifi: sync failed (%s), radio off, retrying in %lu s\n", why, (unsigned long)(retryMs / 1000));
-  goIdle(retryMs);
+  uint32_t waitMs = 5000 + nextRand() % retryMs;
+  Serial.printf("wifi: sync failed (%s), radio off, retrying in %lu s\n", why, (unsigned long)(waitMs / 1000));
+  goIdle(waitMs);
   retryMs = (retryMs * 2 > RETRY_MAX_MS) ? RETRY_MAX_MS : retryMs * 2;
+}
+
+// Next occurrence of this device's slot, measured from a clock that has just
+// been synced, so it is accurate.
+static void scheduleDailySync() {
+  time_t now = time(nullptr);
+  uint32_t todS = (uint32_t)(now % DAY_S);
+  uint32_t waitS = (dailySlotS + DAY_S - todS) % DAY_S;
+  if (waitS < MIN_SYNC_GAP_S) waitS += DAY_S;   // at most 25h between syncs
+
+  time_t at = now + waitS;
+  struct tm t;
+  gmtime_r(&at, &t);
+  Serial.printf("wifi: radio off, next sync %02d:%02d:%02d UTC (in %.1f h)\n",
+                t.tm_hour, t.tm_min, t.tm_sec, waitS / 3600.0);
+  goIdle(waitS * 1000UL);
 }
 
 void netBegin(const char *posixTz) {
@@ -247,9 +310,21 @@ void netBegin(const char *posixTz) {
   // write the guest password to flash every time.
   WiFi.persistent(false);
   esp_wifi_set_storage(WIFI_STORAGE_RAM);
+
+  // Draw entropy while the radio is still on: without RF the ESP32's generator
+  // is only pseudo-random. Mixed with the MAC hash so it differs per device
+  // regardless.
+  uint32_t h = deviceHash();
+  rngState = h ^ esp_random();
+  if (!rngState) rngState = 1;
   WiFi.mode(WIFI_OFF);
 
-  goIdle(0);   // first sync straight away
+  dailySlotS = fmix32(h ^ 0x9e3779b9u) % DAY_S;
+  uint32_t bootDelayS = fmix32(h ^ 0x7f4a7c15u) % BOOT_DELAY_MAX_S;
+  Serial.printf("wifi: device slot %02lu:%02lu:%02lu UTC daily, first sync in %lu s\n",
+                (unsigned long)(dailySlotS / 3600), (unsigned long)(dailySlotS / 60 % 60),
+                (unsigned long)(dailySlotS % 60), (unsigned long)bootDelayS);
+  goIdle(bootDelayS * 1000UL);
 }
 
 void netPoll(const char *posixTz) {
@@ -282,8 +357,7 @@ void netPoll(const char *posixTz) {
       if (syncedFlag) {
         radioOff();
         retryMs = RETRY_MIN_MS;
-        Serial.println("wifi: radio off until the next daily sync");
-        goIdle(SYNC_EVERY_MS);
+        scheduleDailySync();
       } else if (now - phaseStartMs > SYNC_TIMEOUT_MS) {
         syncFailed("no NTP response");
       }

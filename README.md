@@ -62,6 +62,14 @@ all. The radio is off except for a daily time sync, so between syncs the device
 is not on the network. On first boot it erases any credentials a home build
 left in flash.
 
+Company devices are built to run as a fleet. Each one syncs once a day at its
+own UTC time, derived from a hash of its MAC address and anchored to the wall
+clock, so a thousand devices spread their syncs evenly across the day and a
+building-wide power cut cannot line them up. After power-up a device waits a
+per-device delay of up to two minutes before its first sync, so a mass reboot
+reaches the access point and NTP gradually. Failed syncs retry with jittered
+exponential backoff.
+
 Why the company build leaves WiFiManager out entirely: its setup portal is an
 open access point that accepts firmware uploads and erases WiFi settings with no
 authentication (`/u`, `/update`, and `/erase` are registered unconditionally),

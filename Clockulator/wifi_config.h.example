@@ -1,0 +1,6 @@
+// Copy to wifi_config.h and fill in. wifi_config.h is gitignored.
+//
+// Only the company build uses this; the home build gets its credentials from
+// the WiFiManager setup portal instead.
+#define WIFI_SSID "guest-network-name"
+#define WIFI_PASS "guest-network-password"

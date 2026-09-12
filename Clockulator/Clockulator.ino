@@ -24,27 +24,27 @@
  *
  * Hardware:
  *    ESP32-S3, 240x240 ST7789 panel, QMI8658 6-axis IMU.
- *    The rotary encoder is replaced by the gyroscope, the button by tap
- *    detection on the accelerometer. See gestures.cpp for the measured
- *    thresholds.
+ *    The rotary encoder and button are replaced by tilt and tap gestures on
+ *    the accelerometer. See gestures.cpp for the measured thresholds.
+ *
+ * Build modes:
+ *    Home and company builds differ only in networking; see net.h. Build with
+ *    tools/flash.sh home|company, which refuses to build without a mode.
  */
 
 #include <Arduino.h>
-#include <WiFi.h>
-#include <WiFiManager.h>
-#include <esp_sntp.h>
 #include <time.h>
 
 #include <Preferences.h>
 
 #include "display.h"
 #include "gestures.h"
+#include "net.h"
 #include "zones.h"
 
 // The local zone is chosen by tapping the device's left/right edge on the desk;
 // see zones.h. POSIX rules replace the original's NTPClient + Timezone
 // libraries and hand-written TimeChangeRules; %Z yields the DST label on its own.
-static const char *NTP_SERVER = "pool.ntp.org";
 
 static Preferences prefs;
 static int zoneIndex = 0;
@@ -76,20 +76,6 @@ static const int32_t STEP_MINUTE = 60;
 static const int32_t STEP_HOUR   = 3600;
 
 static const uint32_t IDLE_RESET_MS = 10000;  // original's auto_reset_delay
-static const uint32_t WIFI_RETRY_MS   = 30000;
-
-// Credentials come from WiFiManager's captive portal and live in NVS, so there
-// is no secrets.h any more. The portal opens by itself when nothing is saved.
-// To re-run it deliberately, boot the device face-down: this hardware has no
-// button, so the accelerometer stands in for "hold a button while powering on".
-static const char *AP_NAME = "Clockulator";
-static const uint32_t PORTAL_TIMEOUT_S = 180;
-
-// Holding the device face-down is the "hold the button" gesture this hardware
-// does not have. Inverted reads az/|a| about -1.00 against +0.92 upright, so
-// there is no chance of triggering it by accident -- and the prism has to come
-// off to do it at all.
-static const uint32_t FACE_DOWN_HOLD_MS = 3000;
 
 // Anything past 2020 means SNTP has landed at least once.
 static const time_t CLOCK_VALID_AFTER = 1600000000;
@@ -103,47 +89,6 @@ static int activeSign = 0;
 static uint32_t holdStartMs = 0;
 static float stepPhase = 0.0f;
 static uint32_t lastTouchMs = 0;
-static uint32_t lastWifiAttemptMs = 0;
-static bool wifiWasConnected = false;
-
-// SNTP calls this on every successful sync, so a silent clock can be told apart
-// from one that is quietly serving a stale reading.
-static void onTimeSync(struct timeval *tv) {
-  struct tm utc;
-  time_t t = tv->tv_sec;
-  gmtime_r(&t, &utc);
-  char buf[32];
-  strftime(buf, sizeof buf, "%Y-%m-%d %H:%M:%S", &utc);
-  Serial.printf("ntp: synced %s UTC\n", buf);
-}
-
-// Shown while the portal is up, so the screen is not just a blank clock.
-static void onPortalStart(WiFiManager *wm) {
-  Serial.printf("wifi: config portal up, join '%s' then browse to %s\n",
-                AP_NAME, WiFi.softAPIP().toString().c_str());
-  displayMessage("SETUP", "join wifi network", AP_NAME);
-}
-
-// Modal: blocks until provisioned or timed out, then returns to being a clock.
-static void enterConfigPortal() {
-  Serial.println("wifi: entering config portal on request");
-  WiFiManager wm;
-  wm.setAPCallback(onPortalStart);
-  wm.setConfigPortalTimeout(PORTAL_TIMEOUT_S);
-  bool ok = wm.startConfigPortal(AP_NAME);
-  Serial.printf("wifi: portal closed, %s\n", ok ? "connected" : "not connected");
-
-  lastWifiAttemptMs = millis();
-  wifiWasConnected = (WiFi.status() == WL_CONNECTED);
-  displayForceRedraw();
-}
-
-static void startWifi() {
-  lastWifiAttemptMs = millis();
-  WiFi.mode(WIFI_STA);
-  WiFi.begin();   // reuse whatever the portal saved
-  Serial.printf("wifi: [%lu ms] reconnecting with saved credentials\n", (unsigned long)millis());
-}
 
 void setup() {
   Serial.begin(115200);
@@ -158,48 +103,19 @@ void setup() {
     Serial.println("gestures: QMI8658 not found - clock only, no gestures");
   }
 
-  // Face-down at boot forces the portal, standing in for the button this
-  // hardware does not have.
-  bool forcePortal = screenFacingDown();
-  if (forcePortal) Serial.println("wifi: booted face-down, forcing config portal");
-
-  WiFiManager wm;
-  wm.setAPCallback(onPortalStart);
-  // Bounded, so a device that is never provisioned still boots and runs as a
-  // clock rather than sitting in the portal for ever.
-  wm.setConfigPortalTimeout(PORTAL_TIMEOUT_S);
-  wm.setConnectTimeout(20);
-
-  bool connected = forcePortal ? wm.startConfigPortal(AP_NAME) : wm.autoConnect(AP_NAME);
-  Serial.printf("wifi: [%lu ms] %s\n", (unsigned long)millis(), connected ? "connected" : "no connection, continuing anyway");
-
-  // Seed both, or loop() sees a stale zero timer and an unset flag and tears
-  // down the connection that was just established.
-  lastWifiAttemptMs = millis();
-  wifiWasConnected = (WiFi.status() == WL_CONNECTED);
-
-  displayForceRedraw();
-
   prefs.begin("clockulator", false);
   zoneIndex = prefs.getInt("zone", 0);
   if (zoneIndex < 0 || zoneIndex >= ZONE_COUNT) zoneIndex = 0;
-
-  sntp_set_sync_interval(60UL * 1000);   // original resynced every 60s
-  sntp_set_time_sync_notification_cb(onTimeSync);
-  configTzTime(ZONES[zoneIndex].posix, NTP_SERVER);
   applyZone(zoneIndex, false);
+
+  netBegin(ZONES[zoneIndex].posix);
 }
 
 void loop() {
   gesturesPoll();
-
+  netPoll(ZONES[zoneIndex].posix);
 
   uint32_t nowMs = millis();
-
-  if (faceDownHeldMs() > FACE_DOWN_HOLD_MS) {
-    enterConfigPortal();
-    return;
-  }
 
   switch (takeTap()) {
     case TAP_DESK:
@@ -262,19 +178,6 @@ void loop() {
 
   if (dialOffset != 0 && nowMs - lastTouchMs > IDLE_RESET_MS) {
     dialOffset = 0;
-  }
-
-  // Retry WiFi in the background rather than blocking setup() on it.
-  bool isConnected = (WiFi.status() == WL_CONNECTED);
-  if (isConnected != wifiWasConnected) {
-    wifiWasConnected = isConnected;
-    if (isConnected) Serial.printf("wifi: [%lu ms] connected, ip %s\n", (unsigned long)millis(), WiFi.localIP().toString().c_str());
-    else             Serial.printf("wifi: [%lu ms] connection lost (status=%d)\n", (unsigned long)millis(), (int)WiFi.status());
-  }
-  if (!isConnected && nowMs - lastWifiAttemptMs > WIFI_RETRY_MS) {
-    Serial.println("wifi: retrying");
-    WiFi.disconnect();
-    startWifi();
   }
 
   time_t base = time(nullptr);

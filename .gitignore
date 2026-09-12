@@ -3,3 +3,6 @@ build/
 *.hex
 *.bin
 *.elf
+
+# Company-mode network credentials
+Clockulator/wifi_config.h

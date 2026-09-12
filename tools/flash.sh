@@ -2,10 +2,25 @@
 # Build and upload Clockulator to the ESP32-S3-LCD-1.3.
 #
 # Board settings live in Clockulator/sketch.yaml, so arduino-cli picks them up
-# on its own. This script only locates arduino-cli and the serial port.
+# on its own. This script chooses the build mode and locates arduino-cli and the
+# serial port.
 #
-# Usage: tools/flash.sh [port]        (or set CLOCKULATOR_PORT)
+# Usage: tools/flash.sh home|company [port]     (or set CLOCKULATOR_PORT)
+#
+#   home     WiFiManager setup portal, always connected
+#   company  credentials from Clockulator/wifi_config.h, no portal, radio on
+#            only for a daily time sync
 set -euo pipefail
+
+case "${1:-}" in
+  home)    define="-DCLOCKULATOR_MODE_HOME" ;;
+  company) define="-DCLOCKULATOR_MODE_COMPANY" ;;
+  *)
+    echo "usage: tools/flash.sh home|company [port]" >&2
+    exit 2
+    ;;
+esac
+mode="$1"
 
 here="$(cd "$(dirname "$0")" && pwd)"
 sketch="$here/../Clockulator"
@@ -21,7 +36,7 @@ if [[ -z "$cli" ]]; then
   exit 1
 fi
 
-port="${1:-${CLOCKULATOR_PORT:-}}"
+port="${2:-${CLOCKULATOR_PORT:-}}"
 if [[ -z "$port" ]]; then
   # The board shows up twice. The CH340 bridge (wchusbserial/usbserial/ttyUSB)
   # carries both uploads and Serial output. The S3's native USB
@@ -36,6 +51,8 @@ if [[ -z "$port" ]]; then
   exit 1
 fi
 
-echo "port: $port"
-"$cli" compile "$sketch"
-"$cli" upload -p "$port" "$sketch"
+echo "mode: $mode   port: $port"
+# build.defines is empty by default and feeds both the C and C++ recipes. The
+# more obvious build.extra_flags must not be overridden: the ESP32 platform uses
+# it for -DESP32 and the core debug level.
+"$cli" compile --build-property "build.defines=$define" --upload -p "$port" "$sketch"

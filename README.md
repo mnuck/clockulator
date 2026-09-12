@@ -38,16 +38,40 @@ gesture.
   is held
 - **Tap it flat on the desk** to return to the present
 - **Tap its left or right edge on the desk** to change timezone (see `zones.h`)
-- **Hold it face-down for three seconds** to open the WiFi config portal
 - Ten seconds untouched also returns to the present
 - The digits carry a slow colour shimmer keyed to the time of day
 
-Timezone selection persists across reboots. Credentials come from WiFiManager's
-captive portal and live in NVS, so there is no secrets file.
+Timezone selection persists across reboots.
 
-Libraries: WiFiManager, TFT_eSPI, SensorLib. NTP and DST come from the ESP32
-core's own `configTzTime()` and POSIX timezone strings, which replaces the
-NTPClient/Time/Timezone stack the ESP8266 build needs.
+Libraries: TFT_eSPI, SensorLib, and WiFiManager for the home build only. NTP and
+DST come from the ESP32 core's own `configTzTime()` and POSIX timezone strings,
+which replaces the NTPClient/Time/Timezone stack the ESP8266 build needs.
+
+### Home and company builds
+
+The two builds differ only in networking (`net.cpp`). The build mode is a
+compile-time choice, and the code refuses to build without one.
+
+**Home** uses WiFiManager. On first boot it opens a setup access point named
+`Clockulator`; join it and pick your network. It stays connected and syncs NTP
+every minute. **Hold it face-down for three seconds** to re-open the portal.
+
+**Company** takes fixed credentials from `Clockulator/wifi_config.h` (copy
+`wifi_config.h.example`; the real file is gitignored) and contains no portal at
+all. The radio is off except for a daily time sync, so between syncs the device
+is not on the network. On first boot it erases any credentials a home build
+left in flash.
+
+Why the company build leaves WiFiManager out entirely: its setup portal is an
+open access point that accepts firmware uploads and erases WiFi settings with no
+authentication (`/u`, `/update`, and `/erase` are registered unconditionally),
+and `autoConnect()` falls back to that portal whenever the saved network is
+unreachable at boot. Anyone within radio range of a rebooting device could
+reflash it. The company firmware contains none of that code.
+
+Bandwidth is negligible either way. One NTP exchange is 152 bytes at the IP
+layer: about 220 KB/day in the home build, and a few hundred bytes a day in the
+company build. The company build logs the crystal's measured drift at each sync.
 
 ### Building
 
@@ -56,12 +80,17 @@ Board settings are recorded in `Clockulator/sketch.yaml`, which both
 menu. `PartitionScheme=huge_app` is the one to keep an eye on: the firmware is
 about 1.1 MB, and the default scheme's app slot is only about 1.3 MB.
 
-    tools/flash.sh        # build and upload
-    tools/cap.py 20       # reset the board and capture 20s of output from boot
+    tools/flash.sh home       # build and upload the home build
+    tools/flash.sh company    # ...or the company build (needs wifi_config.h)
+    tools/cap.py 20           # reset the board and capture 20s of output from boot
 
 Both find `arduino-cli` (including the copy bundled inside Arduino IDE 2.x) and
 the board's serial port by themselves; pass a port or set `CLOCKULATOR_PORT` to
 override. Close the IDE's Serial Monitor before running `cap.py`.
+
+A plain Arduino IDE build fails on purpose, since it has no way to pass the
+mode. Use `flash.sh`, or add `-DCLOCKULATOR_MODE_HOME` (or `_COMPANY`) to the
+build flags yourself.
 
 ### Notes for this hardware
 

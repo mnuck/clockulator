@@ -17,13 +17,18 @@
 // swings this +-50 deg while Y moves under 9 deg. Forward reads positive.
 static const int8_t TILT_SIGN = +1;
 
-// Neutral noise measured under 0.5 deg, handling transients under 4 deg.
 // Hysteresis, not a single edge: with one threshold the reading chatters across
 // it while the device settles, and since entering a gear steps the clock
 // immediately, every crossing nudged the time by a minute. A deliberate tilt
 // has to reach ENTER to start, and stays live until it falls below EXIT.
-static const float TILT_ENTER_DEG = 9.0f;
-static const float TILT_EXIT_DEG  = 4.0f;
+//
+// Noise alone would allow a low entry (rest under 0.5 deg, handling under 4),
+// and this started at 9/4. In use that was too sensitive: picking the device up
+// or glancing at it off-axis produces real 10-20 deg tilts, each costing a
+// minute. 20 sits clear of that and still well under the ~30 deg minutes
+// gesture; exiting at 12 lets it stop when brought back roughly level.
+static const float TILT_ENTER_DEG = 20.0f;
+static const float TILT_EXIT_DEG  = 12.0f;
 
 // Tap, normalised by resting gravity. On the bench a deliberate strike measured
 // 7-9 and handling noise stayed under 1.9, which put this at 3.5. Days of actual
